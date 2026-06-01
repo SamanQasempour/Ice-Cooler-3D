@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ice Cooler 3D Design</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #0a0e1a;
+    font-family: 'Rajdhani', sans-serif;
+    overflow: hidden;
+    width: 100vw; height: 100vh;
+  }
+  #canvas { display:block; }
+  #ui {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .title {
+    position: absolute;
+    top: 24px; left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 22px;
+    font-weight: 900;
+    color: #00e5ff;
+    letter-spacing: 4px;
+    text-shadow: 0 0 20px #00e5ff88, 0 0 40px #00e5ff44;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    position: absolute;
+    top: 56px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    color: #4fc3f7;
+    letter-spacing: 6px;
+    opacity: 0.7;
+  }
+  .legend {
+    position: absolute;
+    bottom: 30px; left: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #b0bec5;
+    letter-spacing: 1px;
+  }
+  .dot {
+    width: 12px; height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .info {
+    position: absolute;
+    bottom: 30px; right: 30px;
+    text-align: right;
+    font-size: 12px;
+    color: #4fc3f7;
+    opacity: 0.6;
+    letter-spacing: 1px;
+    line-height: 2;
+  }
+  .drag-hint {
+    position: absolute;
+    top: 100px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #546e7a;
+    letter-spacing: 3px;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="ui">
+  <div class="title">DIY Ice Cooler</div>
+  <div class="subtitle">3D Blueprint</div>
+  <div class="drag-hint">DRAG TO ROTATE</div>
+  <div class="legend">
+    <div class="legend-item"><div class="dot" style="background:#b0d4f1;border:1px solid #90caf9"></div>Styrofoam Box (37×17×14 cm)</div>
+    <div class="legend-item"><div class="dot" style="background:#4fc3f7;border:1px solid #29b6f6"></div>PVC Pipe (Ø10 cm)</div>
+    <div class="legend-item"><div class="dot" style="background:#e3f2fd;border:1px solid #90caf9"></div>Ice Container</div>
+    <div class="legend-item"><div class="dot" style="background:#e53935;border:1px solid #ef9a9a"></div>Fan (Exhaust)</div>
+    <div class="legend-item"><div class="dot" style="background:#00e5ff55;border:1px solid #00e5ff"></div>Cold Air Flow</div>
+    <div class="legend-item"><div class="dot" style="background:#1565c044;border:1px solid #1976d2"></div>Water Drain</div>
+  </div>
+  <div class="info">
+    <div>Ice + Salt → Colder Output</div>
+    <div>Seal all gaps with foam tape</div>
+    <div>Fan at exit = max efficiency</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const W = window.innerWidth, H = window.innerHeight;
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setSize(W, H);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e1a);
+scene.fog = new THREE.Fog(0x0a0e1a, 20, 60);
+
+const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 100);
+camera.position.set(6, 4, 8);
+camera.lookAt(0, 0, 0);
+
+// Lights
+const ambient = new THREE.AmbientLight(0x1a2a4a, 0.8);
+scene.add(ambient);
+
+const dirLight = new THREE.DirectionalLight(0x4fc3f7, 1.5);
+dirLight.position.set(5, 8, 5);
+dirLight.castShadow = true;
+scene.add(dirLight);
+
+const pointLight1 = new THREE.PointLight(0x00e5ff, 2, 15);
+pointLight1.position.set(-3, 3, 3);
+scene.add(pointLight1);
+
+const pointLight2 = new THREE.PointLight(0xff4444, 1.5, 10);
+pointLight2.position.set(4, 1, 0);
+scene.add(pointLight2);
+
+const rimLight = new THREE.DirectionalLight(0x0066ff, 0.5);
+rimLight.position.set(-5, -2, -5);
+scene.add(rimLight);
+
+// Grid floor
+const gridHelper = new THREE.GridHelper(20, 20, 0x1a3a5a, 0x0d1f2d);
+gridHelper.position.y = -2.5;
+scene.add(gridHelper);
+
+// ─── Box dimensions (scaled) ───
+// real: 37 × 14 × 17  → scale /6
+const BW = 37/6, BH = 14/6, BD = 17/6; // width, height, depth
+
+// ─── Styrofoam Box (wireframe + transparent) ───
+const boxGeo = new THREE.BoxGeometry(BW, BH, BD);
+const boxMat = new THREE.MeshPhysicalMaterial({
+  color: 0xb0d4f1,
+  transparent: true,
+  opacity: 0.13,
+  roughness: 0.8,
+  metalness: 0,
+  side: THREE.DoubleSide
+});
+const box = new THREE.Mesh(boxGeo, boxMat);
+scene.add(box);
+
+const edgesGeo = new THREE.EdgesGeometry(boxGeo);
+const edgesMat = new THREE.LineBasicMaterial({ color: 0x4fc3f7, linewidth: 1 });
+const edges = new THREE.LineSegments(edgesGeo, edgesMat);
+scene.add(edges);
+
+// Box label
+// ─── PVC Pipe ───
+const pipeR = 10/6/2; // radius
+const pipeLen = BW + 1.2;
+const pipeGeo = new THREE.CylinderGeometry(pipeR, pipeR, pipeLen, 32, 1, true);
+const pipeMat = new THREE.MeshPhysicalMaterial({
+  color: 0x4fc3f7,
+  transparent: true,
+  opacity: 0.18,
+  roughness: 0.3,
+  metalness: 0.1,
+  side: THREE.DoubleSide
+});
+const pipe = new THREE.Mesh(pipeGeo, pipeMat);
+pipe.rotation.z = Math.PI/2;
+scene.add(pipe);
+
+// Pipe rings
+for (let x of [-BW/2, BW/2, -BW/2+0.1, BW/2-0.1]) {
+  const ringGeo = new THREE.TorusGeometry(pipeR, 0.04, 8, 32);
+  const ringMat = new THREE.MeshPhysicalMaterial({ color: 0x29b6f6, roughness: 0.3, metalness: 0.5 });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.y = Math.PI/2;
+  ring.position.x = x;
+  scene.add(ring);
+}
+
+// ─── Ice Container (horizontal wide box) ───
+const iceW = BW * 0.55, iceH = BH * 0.65, iceD = BD * 0.7;
+const iceGeo = new THREE.BoxGeometry(iceW, iceH, iceD);
+const iceMat = new THREE.MeshPhysicalMaterial({
+  color: 0xe3f2fd,
+  transparent: true,
+  opacity: 0.55,
+  roughness: 0.1,
+  metalness: 0,
+  transmission: 0.4,
+  ior: 1.4
+});
+const icebox = new THREE.Mesh(iceGeo, iceMat);
+icebox.position.y = 0.1;
+scene.add(icebox);
+
+// Ice cubes inside
+const cubeSize = 0.22;
+for (let ix = -1; ix <= 1; ix++) {
+  for (let iz = -1; iz <= 1; iz++) {
+    const cubeGeo = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+    const cubeMat = new THREE.MeshPhysicalMaterial({
+      color: 0xb3e5fc,
+      transparent: true, opacity: 0.8,
+      roughness: 0.05, metalness: 0,
+      transmission: 0.6, ior: 1.33
+    });
+    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.position.set(ix * 0.3, 0.05 + (Math.random()*0.1), iz * 0.25);
+    scene.add(cube);
+
+    const cubeEdge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(cubeGeo),
+      new THREE.LineBasicMaterial({ color: 0x81d4fa })
+    );
+    cubeEdge.position.copy(cube.position);
+    scene.add(cubeEdge);
+  }
+}
+
+// Ice container edges
+const iceEdge = new THREE.LineSegments(
+  new THREE.EdgesGeometry(iceGeo),
+  new THREE.LineBasicMaterial({ color: 0x90caf9, linewidth: 2 })
+);
+iceEdge.position.copy(icebox.position);
+scene.add(iceEdge);
+
+// ─── Water drain tray ───
+const drainGeo = new THREE.BoxGeometry(iceW * 0.8, 0.08, iceD * 0.8);
+const drainMat = new THREE.MeshPhysicalMaterial({
+  color: 0x1565c0, transparent: true, opacity: 0.5,
+  roughness: 0.2, metalness: 0.3
+});
+const drain = new THREE.Mesh(drainGeo, drainMat);
+drain.position.y = -BH/2 + 0.12;
+scene.add(drain);
+
+// Water surface
+const waterGeo = new THREE.PlaneGeometry(iceW * 0.75, iceD * 0.75);
+const waterMat = new THREE.MeshPhysicalMaterial({
+  color: 0x29b6f6, transparent: true, opacity: 0.4,
+  roughness: 0, metalness: 0, side: THREE.DoubleSide
+});
+const water = new THREE.Mesh(waterGeo, waterMat);
+water.rotation.x = -Math.PI/2;
+water.position.y = -BH/2 + 0.17;
+scene.add(water);
+
+// ─── Fan (right side) ───
+const fanX = BW/2 + 0.6;
+
+// Fan housing
+const fanHouseGeo = new THREE.CylinderGeometry(pipeR + 0.08, pipeR + 0.08, 0.25, 32);
+const fanHouseMat = new THREE.MeshPhysicalMaterial({ color: 0x333333, roughness: 0.5, metalness: 0.8 });
+const fanHouse = new THREE.Mesh(fanHouseGeo, fanHouseMat);
+fanHouse.rotation.z = Math.PI/2;
+fanHouse.position.x = fanX;
+scene.add(fanHouse);
+
+// Fan blades group
+const fanGroup = new THREE.Group();
+fanGroup.position.x = fanX;
+const bladeCount = 5;
+for (let i = 0; i < bladeCount; i++) {
+  const bladeGeo = new THREE.BoxGeometry(0.05, pipeR * 0.85, 0.06);
+  const bladeMat = new THREE.MeshPhysicalMaterial({ color: 0xe53935, roughness: 0.4, metalness: 0.6 });
+  const blade = new THREE.Mesh(bladeGeo, bladeMat);
+  blade.rotation.x = (i / bladeCount) * Math.PI * 2;
+  blade.position.y = pipeR * 0.45 * Math.sin((i/bladeCount)*Math.PI*2);
+  blade.position.z = pipeR * 0.45 * Math.cos((i/bladeCount)*Math.PI*2);
+  fanGroup.add(blade);
+}
+// Hub
+const hubGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.12, 16);
+const hubMat = new THREE.MeshPhysicalMaterial({ color: 0xb71c1c, roughness: 0.3, metalness: 0.7 });
+const hub = new THREE.Mesh(hubGeo, hubMat);
+hub.rotation.z = Math.PI/2;
+fanGroup.add(hub);
+scene.add(fanGroup);
+
+// ─── Air flow arrows (particles) ───
+const arrowMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.7 });
+const arrows = [];
+for (let i = 0; i < 8; i++) {
+  const coneGeo = new THREE.ConeGeometry(0.05, 0.18, 8);
+  const arrow = new THREE.Mesh(coneGeo, arrowMat.clone());
+  arrow.rotation.z = -Math.PI/2;
+  const side = i < 4 ? -1 : 1;
+  arrow.position.set(
+    (side === -1 ? -BW/2 : BW/4) + (i%4) * (BW / 4) * (side === -1 ? 0.5 : 0.25),
+    (Math.random() - 0.5) * 0.3,
+    (Math.random() - 0.5) * 0.3
+  );
+  arrow.userData = { speed: 0.015 + Math.random()*0.01, startX: -BW/2 - 0.5, endX: BW/2 + 0.5 };
+  scene.add(arrow);
+  arrows.push(arrow);
+}
+
+// ─── Sprites / Labels ───
+function makeLabel(text, position, color = '#00e5ff') {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = 'rgba(10,14,26,0.85)';
+  ctx.roundRect(4, 4, 248, 56, 8);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = 'bold 20px Rajdhani, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.5, 0.4, 1);
+  sprite.position.copy(position);
+  scene.add(sprite);
+}
+
+makeLabel('STYROFOAM BOX', new THREE.Vector3(0, BH/2 + 0.5, 0), '#4fc3f7');
+makeLabel('ICE CONTAINER', new THREE.Vector3(0, 0.7, BD/2 + 0.8), '#e3f2fd');
+makeLabel('FAN (EXHAUST)', new THREE.Vector3(fanX + 0.6, 0.9, 0), '#ff5252');
+makeLabel('WATER DRAIN', new THREE.Vector3(0, -BH/2 - 0.6, 0), '#42a5f5');
+makeLabel('AIR IN', new THREE.Vector3(-BW/2 - 0.8, 0, 0), '#00e5ff');
+makeLabel('COLD AIR OUT', new THREE.Vector3(BW/2 + 1.2, -0.6, 0), '#00e5ff');
+
+// ─── Orbit controls (manual) ───
+let isDragging = false, prevMouse = {x:0, y:0};
+let spherical = { theta: 0.6, phi: 0.7, r: 10 };
+
+canvas.addEventListener('mousedown', e => { isDragging = true; prevMouse = {x:e.clientX, y:e.clientY}; });
+canvas.addEventListener('mouseup', () => isDragging = false);
+canvas.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - prevMouse.x, dy = e.clientY - prevMouse.y;
+  spherical.theta -= dx * 0.008;
+  spherical.phi = Math.max(0.2, Math.min(1.4, spherical.phi - dy * 0.008));
+  prevMouse = {x: e.clientX, y: e.clientY};
+});
+canvas.addEventListener('wheel', e => {
+  spherical.r = Math.max(5, Math.min(18, spherical.r + e.deltaY * 0.01));
+});
+canvas.addEventListener('touchstart', e => { isDragging = true; prevMouse = {x:e.touches[0].clientX, y:e.touches[0].clientY}; });
+canvas.addEventListener('touchend', () => isDragging = false);
+canvas.addEventListener('touchmove', e => {
+  if (!isDragging) return;
+  const dx = e.touches[0].clientX - prevMouse.x, dy = e.touches[0].clientY - prevMouse.y;
+  spherical.theta -= dx * 0.008;
+  spherical.phi = Math.max(0.2, Math.min(1.4, spherical.phi - dy * 0.008));
+  prevMouse = {x: e.touches[0].clientX, y: e.touches[0].clientY};
+});
+
+// ─── Animation ───
+let t = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  t += 0.016;
+
+  // Fan spin
+  fanGroup.rotation.x += 0.08;
+
+  // Auto-rotate if not dragging
+  if (!isDragging) spherical.theta += 0.003;
+
+  // Camera orbit
+  camera.position.x = spherical.r * Math.sin(spherical.phi) * Math.sin(spherical.theta);
+  camera.position.y = spherical.r * Math.cos(spherical.phi);
+  camera.position.z = spherical.r * Math.sin(spherical.phi) * Math.cos(spherical.theta);
+  camera.lookAt(0, 0, 0);
+
+  // Air flow arrows
+  arrows.forEach((a, i) => {
+    a.position.x += a.userData.speed;
+    if (a.position.x > a.userData.endX) a.position.x = a.userData.startX;
+    a.material.opacity = 0.4 + 0.4 * Math.sin(t * 3 + i);
+  });
+
+  // Water shimmer
+  water.material.opacity = 0.3 + 0.15 * Math.sin(t * 2);
+
+  // Glow pulse
+  pointLight1.intensity = 1.8 + 0.5 * Math.sin(t * 1.5);
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
