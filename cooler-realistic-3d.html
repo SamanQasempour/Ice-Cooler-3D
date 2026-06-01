@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>DIY Ice Cooler – 3D View</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d1117;overflow:hidden;width:100vw;height:100vh;font-family:'Segoe UI',sans-serif}
+#c{display:block;width:100%;height:100%}
+#hud{position:fixed;top:0;left:0;width:100%;pointer-events:none;z-index:10}
+.top-bar{
+  display:flex;align-items:center;justify-content:center;
+  padding:12px 16px;gap:8px;
+  background:linear-gradient(180deg,rgba(13,17,23,0.95) 0%,transparent 100%);
+}
+.title{font-size:clamp(13px,3vw,18px);font-weight:700;letter-spacing:3px;color:#e0f7fa;text-transform:uppercase}
+.badge{font-size:10px;background:#00acc1;color:#000;padding:2px 7px;border-radius:20px;letter-spacing:1px;font-weight:700}
+#legend{
+  position:fixed;bottom:0;left:0;width:100%;
+  background:linear-gradient(0deg,rgba(13,17,23,0.97) 0%,transparent 100%);
+  padding:14px 16px 18px;
+  display:flex;flex-wrap:wrap;gap:10px 18px;justify-content:center;
+}
+.leg{display:flex;align-items:center;gap:6px;font-size:11px;color:#b0bec5;letter-spacing:.5px}
+.lc{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+#hint{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  color:rgba(255,255,255,0.25);font-size:12px;letter-spacing:2px;
+  pointer-events:none;transition:opacity 1s;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div class="top-bar">
+    <span class="title">DIY Ice Cooler</span>
+    <span class="badge">3D</span>
+  </div>
+</div>
+<div id="legend">
+  <div class="leg"><div class="lc" style="background:#c8e6c9;opacity:.7"></div>Styrofoam Box</div>
+  <div class="leg"><div class="lc" style="background:#80d8ff"></div>PVC Pipe Ø10cm</div>
+  <div class="leg"><div class="lc" style="background:#e3f2fd;border:1px solid #90caf9"></div>Ice Container</div>
+  <div class="leg"><div class="lc" style="background:#1565c0"></div>Water Drain</div>
+  <div class="leg"><div class="lc" style="background:#ef5350"></div>Exhaust Fan</div>
+  <div class="leg"><div class="lc" style="background:#ff5722"></div>Hot Air In</div>
+  <div class="leg"><div class="lc" style="background:#00e5ff"></div>Cold Air Out</div>
+</div>
+<div id="hint">DRAG · PINCH · SCROLL</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ── Renderer ──────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog = new THREE.FogExp2(0x0d1117, 0.04);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 200);
+
+function resize(){
+  const w=innerWidth, h=innerHeight;
+  renderer.setSize(w,h);
+  camera.aspect=w/h;
+  camera.updateProjectionMatrix();
+}
+resize();
+window.addEventListener('resize',resize);
+
+// ── Lighting ──────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x1a2a3a,1.2));
+
+const sun = new THREE.DirectionalLight(0xffffff,1.8);
+sun.position.set(6,10,6);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=0.1;
+sun.shadow.camera.far=40;
+sun.shadow.camera.left=-8;sun.shadow.camera.right=8;
+sun.shadow.camera.top=8;sun.shadow.camera.bottom=-8;
+scene.add(sun);
+
+const fill = new THREE.DirectionalLight(0x4fc3f7,0.6);
+fill.position.set(-4,3,-4);
+scene.add(fill);
+
+const cold = new THREE.PointLight(0x00e5ff,3,8);
+cold.position.set(3.2,0,0);
+scene.add(cold);
+
+const hot = new THREE.PointLight(0xff5722,2,6);
+hot.position.set(-3.2,0,0);
+scene.add(hot);
+
+// ── REAL dimensions (cm → units /6) ──────────────────────
+// Box: 37L × 17D × 14H
+const S = 1/6;
+const BL=37*S, BD=17*S, BH=14*S;  // box length(x), depth(z), height(y)
+const PR=10*S/2;                    // pipe radius
+
+const group = new THREE.Group();
+scene.add(group);
+
+// helpers
+function mat(color,rough=0.7,metal=0,ops=1,tx=0){
+  return new THREE.MeshStandardMaterial({color,roughness:rough,metalness:metal,
+    transparent:ops<1,opacity:ops,
+    ...(tx?{transmission:tx,ior:1.33}:{})
+  });
+}
+function box(w,h,d,m){
+  const g=new THREE.BoxGeometry(w,h,d);
+  const mesh=new THREE.Mesh(g,m);
+  mesh.castShadow=true;mesh.receiveShadow=true;
+  return mesh;
+}
+function edges(mesh,color=0x4fc3f7,width=1){
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({color,linewidth:width}));
+  e.position.copy(mesh.position);
+  e.rotation.copy(mesh.rotation);
+  return e;
+}
+
+// ── 1. Styrofoam Box (walls only – transparent fill) ──────
+const foamColor = 0xdce8d0;
+const foamThick = 0.06;
+// We build 6 faces as thin panels
+const faceData=[
+  // bottom
+  {w:BL,h:foamThick,d:BD, x:0,y:-BH/2+foamThick/2,z:0},
+  // top – open (no top, we look inside)
+  // left
+  {w:foamThick,h:BH,d:BD, x:-BL/2+foamThick/2,y:0,z:0},
+  // right
+  {w:foamThick,h:BH,d:BD, x:BL/2-foamThick/2,y:0,z:0},
+  // front
+  {w:BL,h:BH,d:foamThick, x:0,y:0,z:BD/2-foamThick/2},
+  // back
+  {w:BL,h:BH,d:foamThick, x:0,y:0,z:-BD/2+foamThick/2},
+];
+faceData.forEach(f=>{
+  const m=box(f.w,f.h,f.d, mat(foamColor,0.9,0,0.55));
+  m.position.set(f.x,f.y,f.z);
+  group.add(m);
+  group.add(edges(m,0x8bc34a,1));
+});
+// top frame only
+const topFrameParts=[
+  {w:BL,h:foamThick,d:foamThick, x:0,y:BH/2-foamThick/2,z:-BD/2+foamThick/2},
+  {w:BL,h:foamThick,d:foamThick, x:0,y:BH/2-foamThick/2,z:BD/2-foamThick/2},
+  {w:foamThick,h:foamThick,d:BD, x:-BL/2+foamThick/2,y:BH/2-foamThick/2,z:0},
+  {w:foamThick,h:foamThick,d:BD, x:BL/2-foamThick/2,y:BH/2-foamThick/2,z:0},
+];
+topFrameParts.forEach(f=>{
+  const m=box(f.w,f.h,f.d,mat(foamColor,0.9,0,0.8));
+  m.position.set(f.x,f.y,f.z);
+  group.add(m);
+});
+
+// ── 2. PVC Pipe ───────────────────────────────────────────
+const pipeLen = BL+0.5;
+const pipeGeo = new THREE.CylinderGeometry(PR,PR,pipeLen,32,1,true);
+const pipeMesh = new THREE.Mesh(pipeGeo, mat(0x90caf9,0.3,0.1,0.22));
+pipeMesh.rotation.z=Math.PI/2;
+group.add(pipeMesh);
+
+// pipe edge rings
+[-pipeLen/2, pipeLen/2].forEach(x=>{
+  const rg=new THREE.TorusGeometry(PR,0.015,8,32);
+  const r=new THREE.Mesh(rg,mat(0x29b6f6,0.4,0.3));
+  r.rotation.y=Math.PI/2; r.position.x=x;
+  group.add(r);
+});
+
+// pipe holes in box walls (visual only – dark discs)
+[-BL/2, BL/2].forEach(x=>{
+  const hg=new THREE.CircleGeometry(PR,32);
+  const h=new THREE.Mesh(hg,mat(0x1a2a1a,1,0));
+  h.rotation.y=Math.PI/2; h.position.x=x;
+  group.add(h);
+});
+
+// ── 3. Ice Container (horizontal wide) ────────────────────
+const ICW=BL*0.52, ICH=BH*0.62, ICD=BD*0.72;
+const iceCont = box(ICW,ICH,ICD, mat(0xe8f5fd,0.05,0,0.45));
+iceCont.position.set(0, 0.04, 0);
+group.add(iceCont);
+group.add(edges(iceCont,0x90caf9));
+
+// ice container label panel
+const iceLabel = box(ICW,ICH,ICD, mat(0xb3e5fc,0.05,0,0.08));
+iceLabel.position.copy(iceCont.position);
+group.add(iceLabel);
+
+// ice cubes
+const iceCubeMat = mat(0xd6f0ff,0.05,0,0.75);
+iceCubeMat.transmission=0.5; iceCubeMat.ior=1.33;
+const cubeSize=0.18;
+for(let ix=-2;ix<=2;ix++){
+  for(let iz=-1;iz<=1;iz++){
+    const c=box(cubeSize,cubeSize,cubeSize,iceCubeMat);
+    c.position.set(ix*0.22, -ICH/2+cubeSize/2+0.02, iz*0.2);
+    c.castShadow=true;
+    group.add(c);
+    group.add(edges(c,0x81d4fa));
+  }
+}
+// second layer
+for(let ix=-1;ix<=1;ix++){
+  const c=box(cubeSize,cubeSize,cubeSize,iceCubeMat);
+  c.position.set(ix*0.22, -ICH/2+cubeSize*1.5+0.03, 0);
+  group.add(c);
+  group.add(edges(c,0x81d4fa));
+}
+
+// ── 4. Water Drain Tray ───────────────────────────────────
+const drainY = -BH/2 + 0.04;
+const drainW=ICW*0.85, drainH=0.06, drainD=ICD*0.85;
+const drain = box(drainW,drainH,drainD, mat(0x1565c0,0.4,0.5,0.9));
+drain.position.set(0,drainY+drainH/2,0);
+group.add(drain);
+group.add(edges(drain,0x42a5f5));
+
+// water surface
+const wg=new THREE.PlaneGeometry(drainW-0.05, drainD-0.05);
+const wm=new THREE.Mesh(wg,mat(0x29b6f6,0.01,0,0.55));
+wm.rotation.x=-Math.PI/2;
+wm.position.set(0,drainY+drainH+0.005,0);
+group.add(wm);
+
+// drip line ice→drain
+const dripPts=[
+  new THREE.Vector3(0,iceCont.position.y-ICH/2,0),
+  new THREE.Vector3(0,drainY+drainH,0)
+];
+const dripGeo=new THREE.BufferGeometry().setFromPoints(dripPts);
+const dripLine=new THREE.Line(dripGeo,new THREE.LineBasicMaterial({color:0x42a5f5,transparent:true,opacity:0.6}));
+group.add(dripLine);
+
+// ── 5. FAN ────────────────────────────────────────────────
+const fanX = BL/2 + 0.1;
+const fanR  = PR + 0.04;
+
+// housing ring
+const fanHRing=new THREE.Mesh(
+  new THREE.TorusGeometry(fanR,0.055,16,40),
+  mat(0x212121,0.4,0.8)
+);
+fanHRing.rotation.y=Math.PI/2;
+fanHRing.position.x=fanX;
+group.add(fanHRing);
+
+// housing back plate
+const fanBack=new THREE.Mesh(
+  new THREE.CircleGeometry(fanR,40),
+  mat(0x1a1a1a,0.5,0.6)
+);
+fanBack.rotation.y=Math.PI/2;
+fanBack.position.x=fanX+0.06;
+group.add(fanBack);
+
+// blade group
+const bladeGroup=new THREE.Group();
+bladeGroup.position.x=fanX;
+bladeGroup.rotation.y=Math.PI/2;
+group.add(bladeGroup);
+
+const bladeCount=7;
+for(let i=0;i<bladeCount;i++){
+  const angle=(i/bladeCount)*Math.PI*2;
+  const bGeo=new THREE.BoxGeometry(0.28,0.055,0.04);
+  const bm=new THREE.Mesh(bGeo,mat(0xef5350,0.4,0.3));
+  bm.position.set(
+    Math.cos(angle)*fanR*0.55,
+    Math.sin(angle)*fanR*0.55,
+    0
+  );
+  bm.rotation.z=angle+0.6;
+  bm.castShadow=true;
+  bladeGroup.add(bm);
+}
+// hub
+const hubMesh=new THREE.Mesh(
+  new THREE.CylinderGeometry(0.07,0.07,0.09,16),
+  mat(0xb71c1c,0.3,0.7)
+);
+hubMesh.rotation.x=Math.PI/2;
+bladeGroup.add(hubMesh);
+
+// motor bracket
+const bktGeo=new THREE.BoxGeometry(0.04,fanR*1.8,0.04);
+const bracket=new THREE.Mesh(bktGeo,mat(0x333,0.5,0.7));
+bracket.position.x=fanX+0.03;
+group.add(bracket);
+
+// ── 6. Air flow particles ─────────────────────────────────
+// Hot air (left, orange/red) + Cold air (right, cyan)
+const particleCount=60;
+const hotPositions=new Float32Array(particleCount*3);
+const coldPositions=new Float32Array(particleCount*3);
+const hotData=[],coldData=[];
+
+for(let i=0;i<particleCount;i++){
+  // hot: enters from left
+  const hx=-BL/2-0.5-Math.random()*1.5;
+  const hy=(Math.random()-0.5)*(PR*1.6);
+  const hz=(Math.random()-0.5)*(PR*1.6);
+  hotPositions[i*3]=hx;
+  hotPositions[i*3+1]=hy;
+  hotPositions[i*3+2]=hz;
+  hotData.push({x:hx,y:hy,z:hz,speed:0.025+Math.random()*0.02});
+
+  // cold: exits from right
+  const cx=BL/2+0.1+Math.random()*1.5;
+  const cy=(Math.random()-0.5)*(PR*1.4);
+  const cz=(Math.random()-0.5)*(PR*1.4);
+  coldPositions[i*3]=cx;
+  coldPositions[i*3+1]=cy;
+  coldPositions[i*3+2]=cz;
+  coldData.push({x:cx,y:cy,z:cz,speed:0.03+Math.random()*0.02});
+}
+
+const hotGeo=new THREE.BufferGeometry();
+hotGeo.setAttribute('position',new THREE.BufferAttribute(hotPositions,3));
+const hotParticles=new THREE.Points(hotGeo,
+  new THREE.PointsMaterial({color:0xff5722,size:0.06,transparent:true,opacity:0.8,sizeAttenuation:true}));
+group.add(hotParticles);
+
+const coldGeo=new THREE.BufferGeometry();
+coldGeo.setAttribute('position',new THREE.BufferAttribute(coldPositions,3));
+const coldParticles=new THREE.Points(coldGeo,
+  new THREE.PointsMaterial({color:0x00e5ff,size:0.06,transparent:true,opacity:0.8,sizeAttenuation:true}));
+group.add(coldParticles);
+
+// ── 7. Sprites (Labels) ───────────────────────────────────
+function makeSprite(text,color='#00e5ff',bgAlpha=0.85){
+  const cv=document.createElement('canvas');
+  cv.width=320;cv.height=72;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle=`rgba(10,14,26,${bgAlpha})`;
+  ctx.beginPath();ctx.roundRect(3,3,314,66,10);ctx.fill();
+  ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.stroke();
+  ctx.fillStyle=color;
+  ctx.font='bold 22px "Segoe UI",sans-serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(text,160,36);
+  const tex=new THREE.CanvasTexture(cv);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+  sp.scale.set(1.8,0.42,1);
+  return sp;
+}
+
+const labels=[
+  {text:'STYROFOAM BOX',color:'#8bc34a', pos:[0, BH/2+0.45, BD/2+0.1]},
+  {text:'ICE CONTAINER',color:'#e3f2fd', pos:[0, ICH/2+0.38, ICD/2+0.55]},
+  {text:'WATER DRAIN',  color:'#42a5f5', pos:[0, drainY-0.38, 0]},
+  {text:'EXHAUST FAN',  color:'#ef9a9a', pos:[fanX+0.5, fanR+0.45, 0]},
+  {text:'HOT AIR IN',   color:'#ff7043', pos:[-BL/2-1.0, 0.5, 0]},
+  {text:'COLD AIR OUT', color:'#00e5ff', pos:[ BL/2+1.3, 0.5, 0]},
+  {text:'PVC Ø10cm',    color:'#80d8ff', pos:[0, PR+0.42, -BD/2-0.2]},
+];
+labels.forEach(l=>{
+  const sp=makeSprite(l.text,l.color);
+  sp.position.set(...l.pos);
+  group.add(sp);
+});
+
+// arrows HOT/COLD
+function makeArrow(dir,color,pos){
+  const cg=new THREE.ConeGeometry(0.07,0.22,8);
+  const m=new THREE.Mesh(cg,mat(color,0.3,0));
+  m.position.set(...pos);
+  if(dir===1) m.rotation.z=-Math.PI/2;
+  else m.rotation.z=Math.PI/2;
+  group.add(m);
+}
+for(let x=-BL/2-0.3;x>-BL/2-1.4;x-=0.35) makeArrow(1,0xff5722,[x,0,0]);
+for(let x=BL/2+0.3;x<BL/2+1.4;x+=0.35) makeArrow(-1,0x00e5ff,[x,0,0]);
+
+// ── Camera setup & orbit ──────────────────────────────────
+const orb={theta:-0.5,phi:1.05,r:10};
+function camFromOrb(){
+  camera.position.set(
+    orb.r*Math.sin(orb.phi)*Math.sin(orb.theta),
+    orb.r*Math.cos(orb.phi),
+    orb.r*Math.sin(orb.phi)*Math.cos(orb.theta)
+  );
+  camera.lookAt(0,0,0);
+}
+camFromOrb();
+
+// Mouse / touch orbit
+let drag=false,lastX=0,lastY=0,pinchDist=0;
+canvas.addEventListener('mousedown',e=>{drag=true;lastX=e.clientX;lastY=e.clientY;});
+window.addEventListener('mouseup',()=>drag=false);
+window.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  orb.theta-=(e.clientX-lastX)*0.007;
+  orb.phi=Math.max(0.15,Math.min(1.55,orb.phi-(e.clientY-lastY)*0.007));
+  lastX=e.clientX;lastY=e.clientY;
+});
+canvas.addEventListener('wheel',e=>{
+  orb.r=Math.max(4,Math.min(20,orb.r+e.deltaY*0.012));
+},{passive:true});
+// touch
+canvas.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){drag=true;lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;}
+  if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    pinchDist=Math.sqrt(dx*dx+dy*dy);
+  }
+},{passive:true});
+canvas.addEventListener('touchend',()=>{drag=false;pinchDist=0;});
+canvas.addEventListener('touchmove',e=>{
+  if(e.touches.length===1&&drag){
+    orb.theta-=(e.touches[0].clientX-lastX)*0.007;
+    orb.phi=Math.max(0.15,Math.min(1.55,orb.phi-(e.touches[0].clientY-lastY)*0.007));
+    lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;
+  }
+  if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const nd=Math.sqrt(dx*dx+dy*dy);
+    orb.r=Math.max(4,Math.min(20,orb.r-(nd-pinchDist)*0.03));
+    pinchDist=nd;
+  }
+},{passive:true});
+
+// hide hint after first interaction
+['mousedown','touchstart'].forEach(ev=>canvas.addEventListener(ev,()=>{
+  document.getElementById('hint').style.opacity='0';
+},{once:true}));
+
+// ── Animate ───────────────────────────────────────────────
+let t=0;
+const hPos=hotGeo.attributes.position;
+const cPos=coldGeo.attributes.position;
+
+function animate(){
+  requestAnimationFrame(animate);
+  t+=0.016;
+
+  // fan spin
+  bladeGroup.rotation.z+=0.12;
+
+  // auto-rotate if idle
+  if(!drag) orb.theta+=0.004;
+  camFromOrb();
+
+  // hot particles move left→right (into box)
+  for(let i=0;i<particleCount;i++){
+    hotData[i].x+=hotData[i].speed;
+    if(hotData[i].x>-BL/2+0.1){
+      hotData[i].x=-BL/2-0.5-Math.random()*1.5;
+    }
+    hPos.array[i*3]=hotData[i].x;
+  }
+  hPos.needsUpdate=true;
+
+  // cold particles move right (out of box)
+  for(let i=0;i<particleCount;i++){
+    coldData[i].x+=coldData[i].speed;
+    if(coldData[i].x>BL/2+2.2){
+      coldData[i].x=BL/2+0.1;
+      coldData[i].y=(Math.random()-0.5)*(PR*1.4);
+      coldData[i].z=(Math.random()-0.5)*(PR*1.4);
+    }
+    cPos.array[i*3]=coldData[i].x;
+    cPos.array[i*3+1]=coldData[i].y;
+    cPos.array[i*3+2]=coldData[i].z;
+  }
+  cPos.needsUpdate=true;
+
+  // water shimmer
+  wm.material.opacity=0.4+0.15*Math.sin(t*2.2);
+  // cold glow pulse
+  cold.intensity=2.5+1.2*Math.sin(t*2);
+  hot.intensity=1.5+0.8*Math.sin(t*1.7+1);
+
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
